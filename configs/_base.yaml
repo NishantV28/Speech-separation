@@ -10,20 +10,16 @@ data:
   # slots and the same number of zero references, or a P1-vs-P4 difference
   # attributes to slot count rather than to the count mechanism.
   #
-  # 6 = data max (5) + 1. The +1 is load-bearing: without it, a 5spk example has
-  # every slot active and NOTHING teaches the model when to stop. One always-
-  # silent slot on the hardest examples is what keeps the existence/stop head
-  # honest. Going higher (8) would only add slots that never see a positive
-  # example, since the data tops out at 5 -- and it worsens the zero-reference
-  # fraction, so the loss gets dominated by "be silent" terms.
-  n_max: 6
+  # 8 = data max (6) + headroom. The headroom is load-bearing: without it a
+  # 6spk example has every slot active and NOTHING teaches the model when to
+  # stop.
+  n_max: 8
   drop_clipped: true
-  # Dataset is 3/4/5 speakers only. No 2spk, and no held-out 6spk, so there is
-  # NO never-seen count -- extrapolation is not measurable with this data. If
-  # 2spk/6spk are ever generated (see docs/dataset_generation.md), set
-  # train_counts [2,3,4,5], n_max 8, and put 6 in extrapolation_counts.
-  train_counts: [3, 4, 5]
-  val_counts: [3, 4, 5]
+  # Dataset is 2-6 speakers. 6spk is HELD OUT OF TRAINING on purpose: it is the
+  # never-seen count, and the only way to evidence "scales to as many speakers
+  # as possible". Train on it and the extrapolation claim evaporates.
+  train_counts: [2, 3, 4, 5]
+  val_counts: [2, 3, 4, 5]
 stft:
   n_fft: 256
   hop: 128
@@ -31,12 +27,15 @@ train:
   steps: 100000
   # MICRO-batch. Keep EFFECTIVE batch (batch x grad_accum) identical across all
   # pipelines or the comparison is confounded by optimisation, not architecture.
-  # Measured peak VRAM at 4s/batch1: TF-GridNet ~5.1GB, MossFormer2 ~0.4GB (14x).
-  # So micro-batch differs per pipeline and grad_accum compensates.
-  #   TF-GridNet (P1,P3-,P4,P5,P6): batch 2  on T4 / DOES NOT FIT 4GB at 4s
-  #   MossFormer2 (P2,P7):          batch 8+ anywhere
-  batch: 2
-  grad_accum: 4     # effective batch = 8 for every pipeline
+  # Measured on RTX 3050 4GB, MossFormer2, 4s clips, FULL training step:
+  #   batch  8: 0.48 s/step  1.27G  16.8 samples/s
+  #   batch 16: 0.72 s/step  2.31G  22.2 samples/s   <- best
+  #   batch 24: 1.87 s/step  3.35G  12.8 samples/s   <- CLIFF: spills to system
+  #   batch 32: 3.88 s/step  4.41G   8.2 samples/s      RAM, 3x slower, NO ERROR
+  # Past 16 you exceed ~3.45GB usable and Windows silently spills over PCIe.
+  # On a 16GB T4, raise it.
+  batch: 16
+  grad_accum: 1     # effective batch = 16 for every pipeline
   lr: 1.0e-3
   warmup: 4000
   clip: 5.0
@@ -46,10 +45,20 @@ train:
 loss:
   snr_max_db: 30.0
   mixture_consistency: true
-  exist_weight: 0.1      # BCE on the existence/stop head
-  conf_weight: 0.0       # P5 only
-  ecapa_weight: 0.0      # P5 only
+  exist_weight: 0.1        # BCE on the existence/stop head
+  conf_weight: 0.0         # P5 only
+  ecapa_weight: 0.0        # P5 only -- needs speechbrain; NOT installed, silently skips
+  # --- the two additions. Both default OFF, so every other pipeline is the
+  # --- clean control and P5's delta is attributable.
+  overlap_alpha: 0.0       # 0 = uniform SI-SNR, exactly as before
+  repulsion_weight: 0.0
+  repulsion_margin: 0.0
 eval:
-  counts: [3, 4, 5]
-  extrapolation_counts: []     # empty: the data has no count above the training max
+  counts: [2, 3, 4, 5]
+  extrapolation_counts: [6]    # NEVER TRAINED -- the headline scaling claim
   gate_db: -25.0
+  # Clips are 10s but training crops to `segment`. Eval crops to the same length
+  # by default: a model trained at 4s has never seen positional embeddings past
+  # frame 501, so evaluating on a full 10s clip would use untrained positions.
+  # `--full` chunks instead (what separate.py does for the demo).
+  crop_to_segment: true

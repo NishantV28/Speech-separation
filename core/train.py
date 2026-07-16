@@ -9,7 +9,6 @@ One loop, all heads. The head decides what `aux` it returns; the loss layer pick
 up whatever is there:
 
     exist_logits -> BCE against "slot i is a real speaker"   (eda, tda, ...)
-    count_logits -> CE against the true count                (film_count)
     conf_logits  -> BCE against each stream's real SI-SNR    (eda_conf, tda_prune)
     stop_logit   -> BCE against "more speakers remain"       (orpit)
 
@@ -35,7 +34,13 @@ from core import config as cfgmod  # noqa: E402
 from core.amp import Amp, describe  # noqa: E402
 from core.data import MixtureDataset, collate  # noqa: E402
 from core.interface import count_parameters  # noqa: E402
-from core.losses import mixture_consistency, pit_loss, si_snr  # noqa: E402
+from core.losses import (  # noqa: E402
+    attractor_repulsion,
+    mixture_consistency,
+    overlap_weights,
+    pit_loss,
+    si_snr,
+)
 from core.registry import build  # noqa: E402
 from core.stft import STFT  # noqa: E402
 
@@ -81,6 +86,17 @@ def aux_losses(aux: dict, batch: dict, est: torch.Tensor, refs: torch.Tensor,
         total = total + cfg["loss"].get("conf_weight", 0.1) * l
         logs["conf"] = l.item()
 
+    # attractor repulsion: penalise two attractors pointing the same way.
+    # Only meaningful on slots that are supposed to be real speakers, so it is
+    # masked by the PIT-aligned active set.
+    rw = cfg["loss"].get("repulsion_weight", 0.0)
+    if rw and "attractors" in aux:
+        act_head = torch.gather(act, 1, perm).bool()  # (B,Q) in head order
+        l = attractor_repulsion(aux["attractors"], act_head,
+                                margin=cfg["loss"].get("repulsion_margin", 0.0))
+        total = total + rw * l
+        logs["repel"] = l.item()
+
     return total, logs
 
 
@@ -99,7 +115,13 @@ def step_masking(batch, stft, backbone, head, cfg, device):
     if cfg["loss"].get("mixture_consistency", True):
         est = mixture_consistency(est, mix.float())
 
-    loss, perm = pit_loss(est, refs.float(), mix.float())
+    # Overlap weighting: ~a third of a 0.67-overlap clip has one speaker talking
+    # and is trivially separable. Uniform SI-SNR spends a third of the gradient
+    # there. alpha=0 recovers the uniform loss exactly -> clean ablation.
+    alpha = cfg["loss"].get("overlap_alpha", 0.0)
+    w = overlap_weights(refs.float(), alpha=alpha) if alpha else None
+
+    loss, perm = pit_loss(est, refs.float(), mix.float(), weight=w)
     a_loss, logs = aux_losses(aux, {**batch, "n_speakers": batch["n_speakers"].to(device)},
                               est, refs.float(), perm, cfg, head)
     logs["sep"] = loss.item()
@@ -205,6 +227,10 @@ def main() -> int:
     ap.add_argument("--segment", type=float, default=None)
     ap.add_argument("--batch", type=int, default=None)
     ap.add_argument("--accum", type=int, default=None)
+    # Warmup MUST be a fraction of steps. The default (4000) is sized for a
+    # 100k run; on a 3k run the LR never leaves the ramp and you are watching a
+    # model train at 5-50% of its intended rate. Rule of thumb: ~10% of steps.
+    ap.add_argument("--warmup", type=int, default=None)
     args = ap.parse_args()
 
     cfg = cfgmod.load(args.config)
@@ -216,6 +242,8 @@ def main() -> int:
         cfg["train"]["batch"] = args.batch
     if args.accum:
         cfg["train"]["grad_accum"] = args.accum
+    if args.warmup is not None:
+        cfg["train"]["warmup"] = args.warmup
     device = torch.device(args.device)
     torch.manual_seed(cfg.get("seed", 0))
 

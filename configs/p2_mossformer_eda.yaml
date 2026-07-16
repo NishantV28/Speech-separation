@@ -1,8 +1,17 @@
-# P2 = P1 with the BACKBONE SWAPPED. One variable, at matched budget.
-# Asks: does MossFormer2's gated-attention + FSMN block beat TF-GridNet's
-# dual-path grid, given the same frontend, head and param count?
-# 4.93M params.
+# P2 -- ROOT OF THE LADDER (MossFormer2 + EDA).
+#
+# Originally the "backbone swap" arm against a TF-GridNet root. TF-GridNet was
+# dropped: it needs ~5.1GB at 4s and 3826 ms/step, so it does not fit a 4GB
+# laptop GPU and is days per run even at 2s. MossFormer2 is RNN-free, 135 ms/step,
+# ~0.4GB. Measured, not assumed.
+#
+# So this is now the root everything else is measured against. Kept at "p2" so
+# the in-flight run and its run directory stay valid -- the number is just a
+# name.
+#
+# EDA infers the speaker count itself: an LSTM decoder emits attractors one at a
+# time, each with a stop probability. 4.93M params.
 extends: _base.yaml
 name: p2_mossformer_eda
 backbone: {name: mossformer2_lite, dim: 48, blocks: 7, seq_dim: 192, n_freqs: 129}
-head:     {name: eda, n_max: 6, attr_dim: 128, max_speakers: 8}
+head:     {name: eda, n_max: 8, attr_dim: 128, max_speakers: 10}

@@ -1,20 +1,39 @@
-# P5 = P4 + confidence-guided pruning + ECAPA consistency. THE CONTRIBUTION.
+# P5 = P4 + THE CONTRIBUTION. Three additions, all attacking ONE failure mode:
+# attractor collapse / over-separation -- two attractors latching onto the same
+# speaker while a real speaker goes unclaimed.
 #
-# Pruning: TDA's existence gate judges the ATTRACTOR, before anything is
-# separated. The confidence head judges the OUTPUT and is trained to regress its
-# actual SI-SNR. Two attractors collapsed onto one speaker both produce muddy
-# output -- visible to confidence, invisible to existence. A slot survives only
-# if it exists AND its output is clean, which should kill over-separation.
+# --- 1. confidence-guided pruning -------------------------------------------
+# TDA's existence gate judges the ATTRACTOR, before anything is separated. The
+# confidence head judges the OUTPUT, trained to regress its real SI-SNR. Two
+# collapsed attractors both produce muddy output -- visible to confidence,
+# invisible to existence. A slot survives only if it exists AND is clean.
 #
-# ECAPA: SI-SNR is a waveform distance and cannot see IDENTITY, so nothing stops
-# two streams being the same person. The push term penalises that directly.
-# Frozen embedder -- finetuning would let the model degrade the metric instead
-# of improving separation. Skipped automatically if speechbrain is absent.
-# 4.96M params.
+# --- 2. attractor repulsion (NEW) -------------------------------------------
+# Collapse is directly visible in the attractors themselves: two attractors on
+# one speaker are two SIMILAR VECTORS. Penalise cosine similarity between active
+# attractors -- one matmul, no dependency. EDA and SepTDA both generate
+# attractors and HOPE they diversify; neither adds a term that makes them.
+# This is the dependency-free replacement for the ECAPA push-loss (below).
+#
+# --- 3. overlap-weighted loss (NEW) -----------------------------------------
+# Mixtures average 0.67 overlap, so ~a third of every clip has ONE person
+# talking and is trivially separable. Uniform SI-SNR spends a third of the
+# gradient there. Weight the error by local speaker count so capacity goes where
+# speakers actually collide. Nearly every separation paper uses uniform SI-SNR,
+# and overlap is THE difficulty axis of the task.
+#
+# ECAPA stays at 0: speechbrain is not installed, so it silently no-ops. Do not
+# turn it on without checking -- a dead loss term that reports nothing is worse
+# than no loss term. Repulsion does the same job for free.
+#
+# ABLATIONS (configs/ablations/) isolate each addition. Run them if time allows;
+# without them a P5 win says the bundle works, not which part did it.
 extends: _base.yaml
 name: p5_tda_prune_ecapa
-backbone: {name: tfgridnet_lite, dim: 64, blocks: 7, hidden: 160, heads: 4}
-head:     {name: tda_prune, n_queries: 6, attr_dim: 128, layers: 2, heads: 4, ffn: 256, conf_threshold: 0.35}
+backbone: {name: mossformer2_lite, dim: 48, blocks: 7, seq_dim: 192, n_freqs: 129}
+head:     {name: tda_prune, n_queries: 8, attr_dim: 128, layers: 2, heads: 4, ffn: 256, conf_threshold: 0.35}
 loss:
   conf_weight: 0.1
-  ecapa_weight: 0.05
+  repulsion_weight: 0.1
+  overlap_alpha: 1.0     # overlapped frames weighted 2x
+  ecapa_weight: 0.0      # speechbrain absent -> would silently no-op

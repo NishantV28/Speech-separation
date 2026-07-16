@@ -1,0 +1,8 @@
+# P4 = P1 with the COUNT MECHANISM swapped: sequential EDA -> parallel TDA.
+# SepTDA-style (arXiv:2401.12473). Learned queries emit all attractors at once,
+# so errors do not compound down a chain the way EDA's do.
+# Parent of P5 and P6. THE CORE COMPARISON OF THE PROJECT is P1 vs P4.
+extends: _base.yaml
+name: p4_mossformer_tda
+backbone: {name: mossformer2_lite, dim: 48, blocks: 7, seq_dim: 192, n_freqs: 129}
+head:     {name: tda, n_queries: 8, attr_dim: 128, layers: 2, heads: 4, ffn: 256}

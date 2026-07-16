@@ -1,0 +1,10 @@
+# ABLATION: overlap-weighting alone -- is the gradient better spent on hard frames?
+# Identical to p5 except for the single loss term below. Everything else --
+# backbone, head, budget, seed, data -- is held fixed, or the delta means nothing.
+extends: ../p5_tda_prune_ecapa.yaml
+name: p5c_overlap_only
+loss:
+  conf_weight: 0.0
+  repulsion_weight: 0.0
+  overlap_alpha: 0.0
+  overlap_alpha: 1.0

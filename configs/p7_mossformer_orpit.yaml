@@ -1,17 +1,15 @@
 # P7 -- DIFFERENT PARADIGM. Recursive one-and-rest extraction (arXiv:1904.03065).
 #
 # Emits exactly 2 streams per call -- "one" and "the rest" -- and recurses. No
-# n_max, no n_queries, no cap of ANY kind: it can extract 9 speakers from a model
-# that only trained on 3. Strongest scaling story in the set.
+# n_max, no n_queries, no cap of ANY kind: the only pipeline here that could
+# extract more speakers than it ever trained on.
 #
 # Its weak point is stopping, so both improvements target that:
-#   - the stop head is LEARNED on the residual embedding, not an energy
-#     threshold (energy cannot tell a quiet speaker from noise)
-#   - the residual is REFINED before recursing, because errors compound here in
-#     a way they do not for attractor methods -- iteration k inherits k-1's
-#     artefacts as its input
-# 4.79M params.
+#   - the stop head is LEARNED on the residual embedding, not an energy threshold
+#     (energy cannot tell a quiet speaker from noise)
+#   - the residual is REFINED before recursing, because errors compound here in a
+#     way they do not for attractor methods
 extends: _base.yaml
 name: p7_mossformer_orpit
-backbone: {name: mossformer2_lite, dim: 48, blocks: 6, seq_dim: 208, n_freqs: 129}
+backbone: {name: mossformer2_lite, dim: 48, blocks: 7, seq_dim: 192, n_freqs: 129}
 head:     {name: orpit, refine: true, stop_threshold: 0.5, max_iters: 8}

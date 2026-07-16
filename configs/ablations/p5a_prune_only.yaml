@@ -1,0 +1,10 @@
+# ABLATION: pruning alone -- the P4 -> P5 delta from confidence only
+# Identical to p5 except for the single loss term below. Everything else --
+# backbone, head, budget, seed, data -- is held fixed, or the delta means nothing.
+extends: ../p5_tda_prune_ecapa.yaml
+name: p5a_prune_only
+loss:
+  conf_weight: 0.0
+  repulsion_weight: 0.0
+  overlap_alpha: 0.0
+  conf_weight: 0.1

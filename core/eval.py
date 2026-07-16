@@ -52,7 +52,22 @@ def _opt_metrics():
 
 
 @torch.no_grad()
-def evaluate(ckpt: Path, split: str | None, counts: list[int] | None, device, limit=None) -> list[dict]:
+def evaluate(ckpt: Path, split: str | None, counts: list[int] | None, device,
+             limit=None, full: bool = False) -> list[dict]:
+    """Evaluate a checkpoint per speaker count.
+
+    Clips are 10s but models train on `segment` (4s) crops. By default eval uses
+    the SAME crop length, for two reasons:
+
+      1. The TDA heads cap context at `max_ctx` (512 frames). A full 10s clip is
+         1251 frames -> ValueError.
+      2. Even without that cap, a model trained at 4s has never seen positional
+         embeddings past frame 501. Evaluating on 10s would run it on untrained
+         positions and report noise as a result.
+
+    `--full` evaluates the whole clip instead. Only meaningful for heads without
+    a context cap (EDA), and it still costs O(T^2) attention.
+    """
     sd = torch.load(ckpt, map_location=device)
     cfg = sd["cfg"]
     stft = STFT(**cfg["stft"]).to(device)
@@ -68,8 +83,9 @@ def evaluate(ckpt: Path, split: str | None, counts: list[int] | None, device, li
 
     rows = []
     for c in counts:
+        seg = None if full else (d["segment"] if cfg["eval"].get("crop_to_segment", True) else None)
         try:
-            ds = MixtureDataset(man, n_max=max(d["n_max"], c), segment=None,
+            ds = MixtureDataset(man, n_max=max(d["n_max"], c), segment=seg,
                                 drop_clipped=d.get("drop_clipped", True), counts=[c])
         except ValueError:
             print(f"  {c}spk: no data, skipped")
@@ -181,6 +197,10 @@ def main() -> int:
     ap.add_argument("--split", default=None, help="manifest path; default = cfg test")
     ap.add_argument("--counts", type=int, nargs="+", default=None)
     ap.add_argument("--limit", type=int, default=None)
+    ap.add_argument("--full", action="store_true",
+                    help="evaluate whole clips instead of `segment` crops. TDA heads will "
+                         "hit max_ctx; and any head is running on untrained positional "
+                         "embeddings past its training length.")
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     ap.add_argument("--compare", type=Path, help="print the cross-pipeline table from runs/")
     args = ap.parse_args()
@@ -192,7 +212,7 @@ def main() -> int:
 
     device = torch.device(args.device)
     print(f"device: {describe(device)}\n{args.ckpt}\n")
-    rows = evaluate(args.ckpt, args.split, args.counts, device, args.limit)
+    rows = evaluate(args.ckpt, args.split, args.counts, device, args.limit, args.full)
     out = args.ckpt.parent / "results.jsonl"
     with out.open("w", encoding="utf-8") as f:
         for r in rows:

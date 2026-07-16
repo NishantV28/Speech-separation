@@ -126,3 +126,65 @@ def test_pit_handles_padded_zero_references():
     est[:, 3:] = 1e-4 * torch.randn(2, 2, 4000)
     loss, _ = pit_loss(est, ref, mix)
     assert torch.isfinite(loss), loss
+
+
+# ---------------------------------------------------------------- new losses
+from core.losses import attractor_repulsion, overlap_weights  # noqa: E402
+
+
+def test_overlap_weights_alpha_zero_is_uniform():
+    """alpha=0 must recover the plain loss EXACTLY, or the ablation is not clean."""
+    refs = torch.randn(2, 4, 16000)
+    w = overlap_weights(refs, alpha=0.0)
+    assert torch.allclose(w, torch.ones_like(w))
+
+
+def test_overlap_weights_upweights_overlap():
+    """One speaker in the first half, two in the second -> second half weighted higher."""
+    refs = torch.zeros(1, 2, 8192)
+    refs[0, 0, :] = torch.randn(8192)          # speaker 0 talks throughout
+    refs[0, 1, 4096:] = torch.randn(4096)      # speaker 1 joins halfway
+    w = overlap_weights(refs, alpha=1.0)
+    assert w[0, :2048].mean() < w[0, 6144:].mean(), (w[0, :2048].mean(), w[0, 6144:].mean())
+
+
+def test_overlap_weights_shape_matches_signal():
+    for T in (16000, 15999, 64000):
+        w = overlap_weights(torch.randn(2, 3, T), alpha=1.0)
+        assert w.shape == (2, T), (w.shape, T)
+
+
+def test_repulsion_zero_for_orthogonal_attractors():
+    a = torch.eye(4).unsqueeze(0)  # mutually orthogonal -> nothing to penalise
+    act = torch.ones(1, 4, dtype=torch.bool)
+    assert attractor_repulsion(a, act).item() < 1e-5
+
+
+def test_repulsion_penalises_collapse():
+    """Two attractors on the same speaker = two identical vectors."""
+    a = torch.randn(1, 4, 8)
+    a[0, 1] = a[0, 0]  # collapse
+    act = torch.ones(1, 4, dtype=torch.bool)
+    collapsed = attractor_repulsion(a, act)
+    a2 = torch.eye(4).unsqueeze(0)
+    assert collapsed > attractor_repulsion(a2, act)
+
+
+def test_repulsion_ignores_inactive_slots():
+    """Inactive slots may collapse freely -- they are all supposed to be silence."""
+    a = torch.randn(1, 4, 8)
+    a[0, 2] = a[0, 3]  # collapse, but both inactive
+    act = torch.tensor([[True, True, False, False]])
+    assert attractor_repulsion(a, act).item() < attractor_repulsion(a, torch.ones(1, 4, dtype=torch.bool)).item()
+
+
+def test_weighted_pit_runs_and_differs():
+    from core.losses import pit_loss
+    torch.manual_seed(0)
+    ref = torch.randn(2, 3, 4000)
+    est = ref + 0.1 * torch.randn(2, 3, 4000)
+    mix = ref.sum(1)
+    a, _ = pit_loss(est, ref, mix)
+    b, _ = pit_loss(est, ref, mix, weight=overlap_weights(ref, alpha=1.0))
+    assert torch.isfinite(a) and torch.isfinite(b)
+    assert not torch.allclose(a, b)

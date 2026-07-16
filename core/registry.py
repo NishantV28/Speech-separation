@@ -9,20 +9,16 @@ from __future__ import annotations
 
 from backbones.gridnet_fsmn import GridNetFSMN
 from backbones.mossformer2_lite import MossFormer2Lite
-from backbones.tfgridnet_lite import TFGridNetLite
 from backbones.tiny import TinyBackbone
 from heads.eda import EDAHead
 from heads.eda_conf import EDAConfHead
-from heads.film_count import FiLMCountHead
 from heads.orpit import ORPITHead
 from heads.oversep import OverSepHead
 from heads.tda import TDAHead
-from heads.tda_memory import TDAMemoryHead
 from heads.tda_prune import TDAPruneHead
 
 BACKBONES = {
     "tiny": TinyBackbone,
-    "tfgridnet_lite": TFGridNetLite,
     "mossformer2_lite": MossFormer2Lite,
     "gridnet_fsmn": GridNetFSMN,
 }
@@ -31,10 +27,8 @@ HEADS = {
     "oversep": OverSepHead,
     "eda": EDAHead,
     "eda_conf": EDAConfHead,
-    "film_count": FiLMCountHead,
     "tda": TDAHead,
     "tda_prune": TDAPruneHead,
-    "tda_memory": TDAMemoryHead,
     "orpit": ORPITHead,
 }
 
