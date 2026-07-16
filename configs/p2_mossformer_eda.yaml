@@ -1,0 +1,8 @@
+# P2 = P1 with the BACKBONE SWAPPED. One variable, at matched budget.
+# Asks: does MossFormer2's gated-attention + FSMN block beat TF-GridNet's
+# dual-path grid, given the same frontend, head and param count?
+# 4.93M params.
+extends: _base.yaml
+name: p2_mossformer_eda
+backbone: {name: mossformer2_lite, dim: 48, blocks: 7, seq_dim: 192, n_freqs: 129}
+head:     {name: eda, n_max: 6, attr_dim: 128, max_speakers: 8}

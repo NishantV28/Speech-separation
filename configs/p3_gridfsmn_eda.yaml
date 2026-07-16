@@ -1,0 +1,24 @@
+# P3 = P1 with the sub-band BLSTM replaced by FSMN. THE BACKBONE PROPOSAL.
+#
+# Budget-matched, not hyperparameter-matched -- say so plainly in the report.
+# FSMN is far cheaper than a BLSTM (1.13M vs 1.88M at identical settings), so
+# holding dim/blocks fixed would hand P3 40% less capacity and confound any loss
+# with capacity. The isolated variable is the sub-band module type at fixed
+# budget.
+#
+# SPEND THE SAVINGS ON WIDTH, NOT DEPTH. This was measured, not assumed. The
+# first attempt spent them on depth (7 -> 14 blocks) and was NOT faster than P1
+# (4012ms vs 3909ms/step): every block still contains the intra-frame BLSTM, so
+# doubling depth doubled the recurrence we KEPT while removing the one we
+# replaced. Net wash. Holding blocks=7 keeps the intra-BLSTM count identical to
+# P1, so the sub-band saving actually shows up.
+#
+# Receptive field: 7 blocks x 2 layers x 40 frames = 561 frames, vs a 4s clip of
+# 501 frames. The FSMN stack still sees the WHOLE utterance, so the "bounded
+# context" objection to dropping the LSTM does not apply at this segment length.
+# It WOULD apply to much longer inputs -- raise fsmn_layers or l/r_order then.
+# 5.03M params.
+extends: _base.yaml
+name: p3_gridfsmn_eda
+backbone: {name: gridnet_fsmn, dim: 96, blocks: 7, hidden: 224, heads: 4, l_order: 20, r_order: 20, fsmn_layers: 2}
+head:     {name: eda, n_max: 6, attr_dim: 128, max_speakers: 8}

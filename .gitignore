@@ -1,0 +1,53 @@
+# ---------------------------------------------------------------- dataset
+# 2.3 GB / 18,010 wav files. GitHub caps files at 100 MB and repos around 1 GB,
+# so this cannot be pushed even if we wanted to. Each teammate keeps their own
+# copy at <repo>/mixtures/.
+mixtures/
+data/
+*.wav
+*.flac
+
+# ------------------------------------------------------------- manifests
+# Small (4.2 MB) but MACHINE-SPECIFIC: every path inside is absolute, e.g.
+#   "C:\\Users\\mansi\\OneDrive\\Desktop\\speech separation\\mixtures\\..."
+# Pushing them would hand your teammate paths that do not exist on his machine.
+# He regenerates his own in ~64 s:
+#     python adapters/librimix_csv.py --repair
+manifests/
+manifests_smoke/
+*.jsonl
+
+# ------------------------------------------------------- training output
+# Checkpoints are ~20 MB each and one per run. Logs and results are
+# reproducible from the code + config.
+runs/
+*.pt
+*.ckpt
+wandb/
+
+# ------------------------------------------------------------ python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ipynb_checkpoints/
+build/
+dist/
+
+# ------------------------------------------------------- environments
+.venv/
+venv/
+env/
+.env
+
+# ------------------------------------------------------------ editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---------------------------------------------------------------- scratch
+tmp/
+scratch/
+*.log

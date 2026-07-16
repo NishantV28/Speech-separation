@@ -1,0 +1,54 @@
+# P8 -- THE INTEGRATED SYSTEM. Not part of the ladder. Read this before reporting it.
+#
+# P1-P7 are an EXPERIMENT: each differs from a named parent by ONE component, so
+# a result attributes to something. P8 is a PRODUCT: every component that looked
+# good, stacked, chasing the best score. It changes ~6 things at once versus P1,
+# so IF IT WINS YOU LEARN NOTHING ABOUT WHY. Both jobs are legitimate -- just do
+# not present P8 as evidence for any single idea.
+#
+# Unknown-speaker handling is EDA: the attractor decoder infers the count itself,
+# so no separate count head is needed. EDA is also unbounded, whereas an explicit
+# count head is hard-capped at n_max.
+#
+# Deviations from the original component list, and why:
+#  - SI-SDR -> THRESHOLDED SNR. Correctness, not preference: with n_max slots
+#    every 2/3/4-speaker batch has zero references, and SI-SDR divides by
+#    ||ref||^2. Undefined.
+#  - Curriculum + adaptive sampling + hard mining -> ONE component
+#    (core/difficulty.py). With dynamic mixing they are the same knob.
+#  - Learnable encoder -> STFT, to stay comparable with P1-P7.
+extends: _base.yaml
+name: p8_kitchen_sink
+
+backbone: {name: mossformer2_lite, dim: 48, blocks: 7, seq_dim: 192, n_freqs: 129}
+head:     {name: eda_conf, n_max: 6, attr_dim: 128, max_speakers: 8, conf_threshold: 0.35}
+
+data:
+  # MixIT's real justification here: alpha-repair quarantines ~27% of mixtures
+  # for clipped REFERENCES -- but their MIXTURES are fine, and MixIT needs no
+  # references. Supervised on the clean 73%, MixIT on the quarantined 27%.
+  # That recovers data that would otherwise be binned, instead of adapting
+  # synthetic->synthetic, which is why MixIT is cut from P1-P7.
+  drop_clipped: false
+  mixit_on_clipped: true
+  wham_noise: null        # set to the WHAM! root once downloaded
+
+train:
+  batch: 4                # MossFormer2 is ~14x lighter than TF-GridNet (measured)
+  grad_accum: 2           # effective batch 8 -- same as every other pipeline
+  difficulty:
+    enabled: true
+    warmup_steps: 20000
+    max_weight_ratio: 4.0
+    ema: 0.9
+
+loss:
+  mixture_consistency: true
+  exist_weight: 0.1
+  conf_weight: 0.1
+  mixit_weight: 0.3
+
+eval:
+  counts: [3, 4, 5]
+  extrapolation_counts: []
+  metrics: [si_snri, pesq, stoi, count_acc]

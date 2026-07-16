@@ -1,0 +1,20 @@
+# P5 = P4 + confidence-guided pruning + ECAPA consistency. THE CONTRIBUTION.
+#
+# Pruning: TDA's existence gate judges the ATTRACTOR, before anything is
+# separated. The confidence head judges the OUTPUT and is trained to regress its
+# actual SI-SNR. Two attractors collapsed onto one speaker both produce muddy
+# output -- visible to confidence, invisible to existence. A slot survives only
+# if it exists AND its output is clean, which should kill over-separation.
+#
+# ECAPA: SI-SNR is a waveform distance and cannot see IDENTITY, so nothing stops
+# two streams being the same person. The push term penalises that directly.
+# Frozen embedder -- finetuning would let the model degrade the metric instead
+# of improving separation. Skipped automatically if speechbrain is absent.
+# 4.96M params.
+extends: _base.yaml
+name: p5_tda_prune_ecapa
+backbone: {name: tfgridnet_lite, dim: 64, blocks: 7, hidden: 160, heads: 4}
+head:     {name: tda_prune, n_queries: 6, attr_dim: 128, layers: 2, heads: 4, ffn: 256, conf_threshold: 0.35}
+loss:
+  conf_weight: 0.1
+  ecapa_weight: 0.05

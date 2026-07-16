@@ -1,0 +1,18 @@
+# Core. On a CUDA machine install torch from the pytorch index FIRST, e.g.:
+#   pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu126
+# A plain `pip install torch` gets the CPU-only wheel and your GPU stays invisible.
+torch>=2.4
+torchaudio>=2.4
+numpy>=1.24
+scipy>=1.10          # Hungarian assignment for PIT
+soundfile>=0.12
+PyYAML>=6.0
+
+# Dataset generation (scripts/generate_dataset.py)
+pyloudnorm>=0.1      # LUFS loudness normalisation; falls back to RMS if absent
+
+# Optional. Absent -> the feature degrades gracefully, nothing crashes.
+pesq>=0.0.4          # eval only
+pystoi>=0.4          # eval only
+speechbrain>=1.0     # P5's ECAPA consistency loss only
+pytest>=7.0

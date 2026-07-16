@@ -1,0 +1,9 @@
+# P0 -- REFERENCE BASELINE, not a contender. Do not report it as a pipeline.
+# Over-separation: 8 slots always, count = slots above an energy gate. The count
+# IS inferred, so it is a legitimate unknown-speaker method -- just the cheapest
+# one, and hard-capped at n_max with no mechanism that could ever exceed it.
+# Exists so the seven have a yardstick.
+extends: _base.yaml
+name: p0_baseline_oversep
+backbone: {name: tfgridnet_lite, dim: 64, blocks: 7, hidden: 160, heads: 4}
+head:     {name: oversep, n_max: 6, gate_db: -25.0}

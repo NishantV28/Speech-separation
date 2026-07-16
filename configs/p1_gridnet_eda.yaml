@@ -1,0 +1,8 @@
+# P1 -- ROOT OF THE LADDER. Every other attractor pipeline is measured against it.
+# TF-GridNet-lite + EDA (sequential LSTM attractors). Truly unbounded: the
+# decoder can be run for any number of steps.
+# 4.75M params.
+extends: _base.yaml
+name: p1_gridnet_eda
+backbone: {name: tfgridnet_lite, dim: 64, blocks: 7, hidden: 160, heads: 4}
+head:     {name: eda, n_max: 6, attr_dim: 128, max_speakers: 8}

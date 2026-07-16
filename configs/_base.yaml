@@ -1,0 +1,55 @@
+# Shared by all seven pipelines. Override ONLY backbone/head in pXX.yaml.
+# Anything else moving between pipelines invalidates the comparison.
+seed: 0
+data:
+  train: manifests/train.jsonl
+  val: manifests/validation.jsonl
+  test: manifests/test.jsonl
+  segment: 4.0
+  # UNIFORM ACROSS ALL SEVEN. Every pipeline gets the same number of output
+  # slots and the same number of zero references, or a P1-vs-P4 difference
+  # attributes to slot count rather than to the count mechanism.
+  #
+  # 6 = data max (5) + 1. The +1 is load-bearing: without it, a 5spk example has
+  # every slot active and NOTHING teaches the model when to stop. One always-
+  # silent slot on the hardest examples is what keeps the existence/stop head
+  # honest. Going higher (8) would only add slots that never see a positive
+  # example, since the data tops out at 5 -- and it worsens the zero-reference
+  # fraction, so the loss gets dominated by "be silent" terms.
+  n_max: 6
+  drop_clipped: true
+  # Dataset is 3/4/5 speakers only. No 2spk, and no held-out 6spk, so there is
+  # NO never-seen count -- extrapolation is not measurable with this data. If
+  # 2spk/6spk are ever generated (see docs/dataset_generation.md), set
+  # train_counts [2,3,4,5], n_max 8, and put 6 in extrapolation_counts.
+  train_counts: [3, 4, 5]
+  val_counts: [3, 4, 5]
+stft:
+  n_fft: 256
+  hop: 128
+train:
+  steps: 100000
+  # MICRO-batch. Keep EFFECTIVE batch (batch x grad_accum) identical across all
+  # pipelines or the comparison is confounded by optimisation, not architecture.
+  # Measured peak VRAM at 4s/batch1: TF-GridNet ~5.1GB, MossFormer2 ~0.4GB (14x).
+  # So micro-batch differs per pipeline and grad_accum compensates.
+  #   TF-GridNet (P1,P3-,P4,P5,P6): batch 2  on T4 / DOES NOT FIT 4GB at 4s
+  #   MossFormer2 (P2,P7):          batch 8+ anywhere
+  batch: 2
+  grad_accum: 4     # effective batch = 8 for every pipeline
+  lr: 1.0e-3
+  warmup: 4000
+  clip: 5.0
+  amp: auto         # auto = bf16 on Ampere, fp16+scaler on Turing. Never hardcode.
+  grad_ckpt: false
+  ckpt_every: 500
+loss:
+  snr_max_db: 30.0
+  mixture_consistency: true
+  exist_weight: 0.1      # BCE on the existence/stop head
+  conf_weight: 0.0       # P5 only
+  ecapa_weight: 0.0      # P5 only
+eval:
+  counts: [3, 4, 5]
+  extrapolation_counts: []     # empty: the data has no count above the training max
+  gate_db: -25.0
