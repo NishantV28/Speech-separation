@@ -17,4 +17,4 @@
 extends: _base.yaml
 name: p3_gridfsmn_eda
 backbone: {name: gridnet_fsmn, dim: 96, blocks: 7, hidden: 224, heads: 4, l_order: 20, r_order: 20, fsmn_layers: 2}
-head:     {name: eda, n_max: 8, attr_dim: 128, max_speakers: 10}
+head:     {name: eda, n_max: 4, attr_dim: 128, max_speakers: 6}

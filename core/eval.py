@@ -85,8 +85,11 @@ def evaluate(ckpt: Path, split: str | None, counts: list[int] | None, device,
     for c in counts:
         seg = None if full else (d["segment"] if cfg["eval"].get("crop_to_segment", True) else None)
         try:
+            # random_crop=False: eval must score the SAME window every run, or
+            # the numbers move for reasons unrelated to the model.
             ds = MixtureDataset(man, n_max=max(d["n_max"], c), segment=seg,
-                                drop_clipped=d.get("drop_clipped", True), counts=[c])
+                                drop_clipped=d.get("drop_clipped", True), counts=[c],
+                                random_crop=False)
         except ValueError:
             print(f"  {c}spk: no data, skipped")
             continue
@@ -213,7 +216,11 @@ def main() -> int:
     device = torch.device(args.device)
     print(f"device: {describe(device)}\n{args.ckpt}\n")
     rows = evaluate(args.ckpt, args.split, args.counts, device, args.limit, args.full)
-    out = args.ckpt.parent / "results.jsonl"
+    # name by split: running the train diagnostic used to OVERWRITE the test
+    # results, so --compare would silently build the final table out of train
+    # numbers.
+    tag = "" if args.split is None else "_" + Path(args.split).stem
+    out = args.ckpt.parent / f"results{tag}.jsonl"
     with out.open("w", encoding="utf-8") as f:
         for r in rows:
             f.write(json.dumps(r) + "\n")

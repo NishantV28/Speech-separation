@@ -82,33 +82,49 @@ def separate_long(stft, backbone, head, wav: np.ndarray, seg: float, device, is_
     if starts[-1] + L < T:
         starts.append(T - L)
 
-    out = None
-    norm = np.zeros(T, dtype=np.float32)
+    # Pass 1: separate every chunk, THEN stitch.
+    #
+    # Two passes rather than one because OR-PIT returns a DIFFERENT NUMBER OF
+    # STREAMS PER CHUNK -- it recurses until its stop head fires, and that fires
+    # at different depths on different windows (chunk 1 -> 2 speakers, chunk 2 ->
+    # 5). Attractor heads have a fixed slot count and never do this. Sizing the
+    # output buffer from the first chunk therefore crashes on P7 as soon as a
+    # later chunk disagrees.
+    chunks = []
     counts = []
-    ref = None
     for s in starts:
         mix = torch.from_numpy(wav[s : s + L]).float().unsqueeze(0).to(device)
         est, n = separate_chunk(stft, backbone, head, mix, is_orpit)
-        e = est.cpu().numpy()
+        chunks.append(est.cpu().numpy())
         counts.append(n)
-        if out is None:
-            out = np.zeros((e.shape[0], T), dtype=np.float32)
-            ref = e
-        else:
-            # greedily align this chunk's slots to the first chunk's, by
-            # correlation on the overlapping region
+
+    N = max(c.shape[0] for c in chunks)
+    chunks = [
+        c if c.shape[0] == N else np.concatenate([c, np.zeros((N - c.shape[0], c.shape[1]), np.float32)])
+        for c in chunks
+    ]
+
+    # Pass 2: align each chunk's slots to the first chunk's, then overlap-add.
+    # Slot identity is not guaranteed across chunks for any head except P6, so
+    # without this speaker 1 could become speaker 3 halfway through.
+    out = np.zeros((N, T), dtype=np.float32)
+    norm = np.zeros(T, dtype=np.float32)
+    ref = chunks[0]
+    for s, e in zip(starts, chunks):
+        if e is not ref:
             order, used = [], set()
-            for i in range(e.shape[0]):
+            for i in range(N):
                 best, bj = -np.inf, 0
-                for j in range(ref.shape[0]):
+                for j in range(N):
                     if j in used:
                         continue
                     a, b = e[i], ref[j]
                     c = float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b) + 1e-9))
                     if c > best:
                         best, bj = c, j
-                order.append(bj); used.add(bj)
-            inv = np.zeros(e.shape[0], dtype=int)
+                order.append(bj)
+                used.add(bj)
+            inv = np.zeros(N, dtype=int)
             for i, j in enumerate(order):
                 inv[j] = i
             e = e[inv]

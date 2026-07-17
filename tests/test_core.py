@@ -188,3 +188,29 @@ def test_weighted_pit_runs_and_differs():
     b, _ = pit_loss(est, ref, mix, weight=overlap_weights(ref, alpha=1.0))
     assert torch.isfinite(a) and torch.isfinite(b)
     assert not torch.allclose(a, b)
+
+
+# ------------------------------------------------- crop recount + relative pruning
+def test_relative_pruning_survives_uniformly_low_confidence():
+    """The bug this replaces: an absolute threshold rejects every slot when the
+    model is early and all confidences are low, collapsing the count to 1 --
+    even though the activity gate had the count right."""
+    from heads.tda_prune import TDAPruneHead
+    torch.manual_seed(0)
+    h = TDAPruneHead(32, n_queries=6, attr_dim=32, layers=1, heads=2, ffn=64, conf_ratio=0.3)
+    with torch.no_grad():
+        H = torch.randn(2, 32, 33, 40)
+        _, aux = h(H)
+    # whatever the absolute confidence level, n_est must never silently floor to 1
+    assert aux["n_est"].shape == (2,)
+    assert (aux["n_est"] >= 1).all()
+
+
+def test_relative_pruning_disabled_at_ratio_zero():
+    from heads.tda_prune import TDAPruneHead
+    torch.manual_seed(0)
+    h = TDAPruneHead(32, n_queries=6, attr_dim=32, layers=1, heads=2, ffn=64, conf_ratio=0.0)
+    with torch.no_grad():
+        _, aux = h(torch.randn(1, 32, 33, 40))
+    expected = (aux["activity"] > h.stop_threshold).sum(1).clamp(min=1)
+    assert (aux["n_est"] == expected).all(), (aux["n_est"], expected)

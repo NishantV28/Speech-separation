@@ -28,9 +28,20 @@ from .eda import EDAHead
 
 
 class EDAConfHead(EDAHead):
-    def __init__(self, *args, conf_hidden: int = 64, conf_threshold: float = 0.35, **kw):
+    def __init__(
+        self,
+        *args,
+        conf_hidden: int = 64,
+        conf_ratio: float = 0.3,
+        conf_threshold: float | None = None,  # deprecated, ignored
+        **kw,
+    ):
         super().__init__(*args, **kw)
-        self.conf_threshold = conf_threshold
+        # Fraction of the BEST slot's confidence a slot must reach to survive.
+        # RELATIVE, not absolute -- see forward(). 0 disables pruning.
+        # `conf_threshold` is accepted and ignored so pre-switch checkpoints
+        # still load (eval rebuilds from the config stored in the checkpoint).
+        self.conf_ratio = conf_ratio
         attr_dim = self.summary.out_channels
         self.conf = nn.Sequential(
             nn.Linear(attr_dim + self.dim, conf_hidden),
@@ -54,7 +65,17 @@ class EDAConfHead(EDAHead):
 
         act = torch.sigmoid(exist_logits)
         conf = torch.sigmoid(conf_logits)
-        keep = (act > self.stop_threshold) & (conf > self.conf_threshold)
+
+        # RELATIVE pruning. An absolute threshold is a bootstrap trap: confidence
+        # predicts SI-SNR, so early in training it correctly says "low" for every
+        # stream, a fixed gate rejects them all, and the count collapses to the
+        # clamp floor of 1 -- even when the activity gate had it right. Judge each
+        # slot against the best slot in THIS mixture instead: scale-free, so it
+        # prunes nothing when the model is bad and outliers when it is good.
+        keep = act > self.stop_threshold
+        if self.conf_ratio > 0:
+            best = (conf * keep.float()).amax(1, keepdim=True).clamp_min(1e-6)
+            keep = keep & (conf > self.conf_ratio * best)
 
         return masks, {
             "exist_logits": exist_logits,

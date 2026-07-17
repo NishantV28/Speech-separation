@@ -123,7 +123,8 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[1])
     ap.add_argument("--splits", nargs="+", default=["train", "validation", "test"])
-    ap.add_argument("--counts", nargs="+", default=["3spk", "4spk", "5spk"])
+    ap.add_argument("--counts", nargs="+", default=["2spk", "3spk", "4spk", "5spk", "6spk"],
+                    help="missing counts are skipped, so listing extras is harmless")
     ap.add_argument("--out", type=Path, default=Path("manifests"))
     ap.add_argument("--repair", action="store_true", help="fit alpha and flag clipping (reads every wav; slow)")
     ap.add_argument("--limit", type=int, default=None, help="first N rows per csv, for smoke tests")

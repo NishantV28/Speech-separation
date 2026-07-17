@@ -31,7 +31,7 @@
 extends: _base.yaml
 name: p5_tda_prune_ecapa
 backbone: {name: mossformer2_lite, dim: 48, blocks: 7, seq_dim: 192, n_freqs: 129}
-head:     {name: tda_prune, n_queries: 8, attr_dim: 128, layers: 2, heads: 4, ffn: 256, conf_threshold: 0.35}
+head:     {name: tda_prune, n_queries: 4, attr_dim: 128, layers: 2, heads: 4, ffn: 256, conf_ratio: 0.3}
 loss:
   conf_weight: 0.1
   repulsion_weight: 0.1

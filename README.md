@@ -8,144 +8,60 @@ itself. That is the hard part, and it is the point of the project.
 
 ---
 
-## ⭐ Run these three
-
-Everything else is optional. These three, in this order:
-
-| | Command | What it's for |
-|---|---|---|
-| **1️⃣** | `configs/p2_mossformer_eda.yaml` | **The baseline.** Everything else is compared against it. Run this first or the other numbers mean nothing. |
-| **2️⃣** | `configs/p4_mossformer_tda.yaml` | **The comparison.** Same model, different way of counting speakers. P2 vs P4 is the main experiment. |
-| **3️⃣** | `configs/p5_tda_prune_ecapa.yaml` | **Your contribution.** P4 plus three new ideas. Its score only means something next to P4's. |
+## ⭐ Every command, in order
 
 ```bash
-python -m core.train --config configs/p2_mossformer_eda.yaml  --steps 10000 --warmup 1000
-python -m core.train --config configs/p4_mossformer_tda.yaml  --steps 10000 --warmup 1000
-python -m core.train --config configs/p5_tda_prune_ecapa.yaml --steps 10000 --warmup 1000
-```
-
-**~2 hours each** on an RTX 3050. Training auto-resumes — if it crashes, run the
-same command again.
-
----
-
-## Setup — once
-
-You need the `mixtures/` folder at the repo root. It is **not** in git (2.3 GB):
-
-```
-Speech-separation/
-  mixtures/
-    train/{2,3,4,5,6}spk/{mixed,sources}/...
-    validation/...
-    test/...
-  core/  configs/  heads/  ...
-```
-
-```bash
+# ---- ONCE, after cloning or whenever mixtures/ changes -------------------
 pip install -r requirements.txt
+python adapters/librimix_csv.py --repair        # ~4 min. NOT optional. See below.
+python scripts/overfit_gate.py                  # ~30s, must print "GATE PASS"
 
-# turn your wavs into manifests AND fix the data bug. ~1 min. NOT optional.
-python adapters/librimix_csv.py --repair
+# ---- TRAIN (~4h) --------------------------------------------------------
+python -m core.train --config configs/p5_tda_prune_ecapa.yaml --steps 20000 --warmup 2000
 
-# sanity check -- ~30s, must print "GATE PASS"
-python scripts/overfit_gate.py
-```
+# ---- CHECK AT ~STEP 3000, do not wait 4h --------------------------------
+python -m core.eval --ckpt runs/p5_tda_prune_ecapa-<hash>/last.pt --split manifests/train.jsonl --limit 30
 
-If the gate fails, **stop**. Something is broken and training won't fix it.
+# ---- SCORE IT (run train first, test LAST) ------------------------------
+python -m core.eval --ckpt runs/p5_tda_prune_ecapa-<hash>/last.pt --split manifests/train.jsonl --limit 30
+python -m core.eval --ckpt runs/p5_tda_prune_ecapa-<hash>/last.pt
 
-If `mixtures/` lives elsewhere:
-`python adapters/librimix_csv.py --repair --root /path/to/parent`
+# ---- DEMO ---------------------------------------------------------------
+python separate.py --ckpt runs/p5_tda_prune_ecapa-<hash>/last.pt     --wav mixtures/test/3spk/mixed/test_3spk_00000000.wav --out demo/ --figure
 
----
-
-## The workflow — repeat for each pipeline
-
-### Step 1 — train (~2h)
-
-```bash
-python -m core.train --config configs/p2_mossformer_eda.yaml --steps 10000 --warmup 1000
-```
-
-Watch the `sep` number. It starts around +25 and must **go negative**. Negative
-means it is actually separating voices.
-
-```
-      1000  exist 0.69  sep  0.15   0.72s/step
-      3000  exist 0.55  sep -4.20   0.72s/step    <- healthy
-```
-
-If `sep` is still positive at step 3000, stop and investigate.
-
-**A checkpoint is saved every 500 steps** to `runs/<name>-<hash>/last.pt`. If the
-run dies — crash, power cut, closed laptop — **run the exact same command again**
-and it resumes where it stopped. Nothing is lost.
-
-⚠️ `--steps` is part of the folder name. Resume with the *same* `--steps 10000`,
-or it starts a fresh run in a new folder.
-
-### Step 2 — get the numbers
-
-```bash
-python -m core.eval --ckpt runs/p2_mossformer_eda-<hash>/last.pt
-```
-
-```
-  3spk (n= 82): SI-SNRi  6.41 dB   count acc 71.2%  (mean n_est 3.2)
-  4spk (n= 74): SI-SNRi  4.88 dB   count acc 58.1%  (mean n_est 4.4)
-  6spk (n= 64): SI-SNRi  2.10 dB   count acc 31.2%  <- EXTRAPOLATION (never trained)
-```
-
-**SI-SNRi** — how much cleaner the voices got, in dB. Higher is better.
-**count acc** — how often it guessed the right number of speakers. This is half
-your project; report it.
-
-Saves `results.jsonl` beside the checkpoint. Don't copy these by hand — step 4
-collects them.
-
-### Step 3 — listen to it
-
-```bash
-python separate.py --ckpt runs/p2_mossformer_eda-<hash>/last.pt \
-    --wav mixtures/test/4spk/mixed/test_4spk_00000000.wav \
-    --out demo/ --figure
-```
-
-```
-==> DETECTED 4 SPEAKERS   (never told; inferred by the model)
-  demo/speaker1.wav    +0.0 dB rel. loudest
-  demo/speaker2.wav    -2.1 dB rel. loudest
-```
-
-Writes each voice as a wav plus `demo/spectrograms.png`. **This is your demo
-video**: play the mixture (chaos), show the detected count, play each voice.
-
-Any length works — 10s files run at 11× realtime.
-
-### Step 4 — next pipeline, then compare
-
-Repeat 1–3 for `p4_mossformer_tda.yaml`, then `p5_tda_prune_ecapa.yaml`. Then:
-
-```bash
+# ---- COMPARE EVERYTHING TRAINED SO FAR ----------------------------------
 python -m core.eval --compare runs/
 ```
 
+The run prints its own `<hash>` at startup — copy it from there.
+
+**Auto-resume**: if training dies, rerun the *identical* command. `--steps` is
+part of the folder name, so keep it the same or you start over.
+
+**`--fresh`**: only when the model shape changed (e.g. `n_max`). It ignores the
+existing checkpoint and starts from zero.
+
+### What to watch while training
+
 ```
-pipeline                    3spk      4spk      5spk   count acc
-----------------------------------------------------------------
-p2_mossformer_eda           6.41      4.88      3.12       64.3%
-p4_mossformer_tda           7.05      5.60      3.71       71.8%
-p5_tda_prune_ecapa          7.44      6.02      4.15       79.1%
+      3000  exist 0.55  conf 0.24  repel 0.15  sep -4.20   0.72s/step
 ```
 
-**That table is your result.** It's built from the `results.jsonl` files, so it's
-reproducible and you never transcribe a number by hand.
+- **`sep` must go negative.** Positive at step 3000 = something is wrong.
+- **`s/step` should be ~0.7.** If it is 4+, something else is using the GPU.
+- **`repel` should fall** — attractors spreading apart.
 
-### Keeping checkpoints
+### The mid-run check that matters
 
-Each run folder holds `last.pt` (~60 MB), `config.json`, `train_log.jsonl`,
-`results.jsonl`. **Checkpoints are gitignored** — too big for GitHub. Copy them
-to Drive or a USB stick yourself if you want them kept.
+At ~step 3000, run the train-split eval above and look at **3spk SI-SNRi**:
+
+| | |
+|---|---|
+| above ~2 dB and climbing | it is learning — let it finish |
+| still ~1.7 dB | more steps will not help — stop, something else is wrong |
+
+The previous run sat at 1.78 dB on 3spk train and never moved for 20,000 steps.
+That one number saves you four hours.
 
 ---
 
@@ -153,27 +69,35 @@ to Drive or a USB stick yourself if you want them kept.
 
 **Clips are 10 seconds, 2–6 speakers, 16 kHz.**
 
-**Training uses a random 4-second window from each clip.** Not the whole 10s —
-deliberately:
+**Training takes a random 4-second window from each clip — a DIFFERENT one every
+epoch.** That randomness matters: it was previously frozen (same window every
+time), and the model memorised 3,091 fixed clips instead of learning. 2spk hit
+7.08 dB on train and 0.96 dB on test — a 6 dB overfitting gap. Fresh windows give
+roughly 2.5× the effective data from files you already have.
 
-- MossFormer2's attention cost grows with the *square* of length. 4s → 10s is
-  about **6× more expensive**, and your batch size would collapse from 16 to ~4.
-- The TDA heads (P4/P5) cap context at 512 frames. 10s is 1251 frames → crash.
+Not the whole 10s, deliberately: MossFormer2's attention cost grows with the
+*square* of length (4s → 10s is ~6× on attention alone, batch collapses 16 → 4),
+and the TDA heads cap context at 512 frames while 10s is 1251 → crash.
 
-Cropping avoids both, and the 10s clips still help — they're a bigger pool to
-draw windows from.
+**Eval uses a FIXED window** so scores don't wobble between runs, and the same 4s
+length — a model trained at 4s has never seen frame 502+, so scoring it on a full
+clip would report noise. `--full` overrides.
 
-**Evaluation also uses 4s windows**, for a less obvious reason: a model trained
-on 4s has never seen position 502 or beyond, so testing it on a full 10s clip
-would run it on parts it never learned and report nonsense. `--full` overrides
-this if you want it.
+**The demo (`separate.py`) handles any length** — chunks and stitches. 10s runs at
+11× realtime.
 
-**The demo (`separate.py`) handles any length** — it splits long audio into
-chunks, separates each, and stitches them back. A 10s file runs at 11× realtime.
+**Training is on 2 and 3 speakers only.** This is SepTDA's protocol — the state of
+the art trains on exactly 2+3 and tests beyond. Spreading a 5M model and 3k
+mixtures across 2–5 speakers gave ~1 dB on *all* of them. The model is still never
+*told* the count; it infers 2 or 3 itself. **Unknown ≠ unbounded**, and this
+project is about unknown.
 
-**6-speaker mixtures are excluded from training on purpose.** They're the test
-for "can it handle a number of speakers it has never seen?" — which is your
-headline claim. If you train on them, you lose the ability to make it.
+**4spk is the extrapolation test** — never trained, so it evidences the scaling
+claim.
+
+**`n_max: 4`** = training max (3) + 1 headroom slot. Slots whose target is silence
+are free points, so 8 slots against 2–3 speakers meant most of the gradient
+rewarded staying quiet.
 
 ---
 
@@ -189,7 +113,7 @@ headline claim. If you train on them, you lose the ability to make it.
 | ⭐ **P4** | MossFormer2 | **TDA** | **the count-mechanism comparison** |
 | ⭐ **P5** | MossFormer2 | **TDA + 3 new ideas** | **your contribution** |
 | P7 | MossFormer2 | OR-PIT | the only one with no speaker limit |
-| P8 | MossFormer2 | EDA + confidence | everything stacked; proves nothing on its own |
+| P8 | MossFormer2 | EDA + confidence | everything stacked; proves nothing on its own | 
 
 All are ~5M parameters, within 10% of each other. That matters: at different
 sizes you'd be measuring *model size*, not *ideas*.
@@ -255,19 +179,20 @@ weirdly slow, this is why. 16 is already the default.
 
 ## Steps and epochs
 
-**2,343 usable training mixtures** (3,000 minus ~22% thrown out for damaged
-audio — see below).
+**1,649 usable training mixtures** (2spk + 3spk, minus ~25% quarantined for
+clipped audio).
 
-| steps @ batch 16 | epochs | time | result |
-|---|---|---|---|
-| 6,000 | 41 | 1.2h | rough, but the demo works |
-| **10,000** | **68** | **2.0h** | **what to run** |
-| 30,000 | 205 | 6h | barely better — it starts memorising |
+| steps @ batch 16 | epochs | time |
+|---|---|---|
+| 6,000 | 58 | 1.2h |
+| **20,000** | **194** | **4.0h** |
 
-⚠️ **`warmup` must be about 10% of your steps.** The default in `_base.yaml` is
-4000, meant for a 100k run. On a 10k run use `--warmup 1000`, or the learning
-rate never warms up properly and the model barely trains. This already cost one
-wasted run.
+Because crops are now random, "epochs" overstates repetition — each pass sees
+different windows, which is the point.
+
+⚠️ **`warmup` must be ~10% of your steps.** The default in `_base.yaml` is 4000,
+sized for a 100k run. On 20k use `--warmup 2000`. Get this wrong and the learning
+rate never warms up — it already cost one wasted run.
 
 ---
 

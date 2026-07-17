@@ -56,9 +56,21 @@ from .tda import TDAHead
 class TDAPruneHead(TDAHead):
     """TDA + a confidence head that scores separated streams, not attractors."""
 
-    def __init__(self, *args, conf_hidden: int = 64, conf_threshold: float = 0.35, **kw):
+    def __init__(
+        self,
+        *args,
+        conf_hidden: int = 64,
+        conf_ratio: float = 0.3,
+        conf_threshold: float | None = None,  # deprecated
+        **kw,
+    ):
         super().__init__(*args, **kw)
-        self.conf_threshold = conf_threshold
+        # `conf_threshold` was an ABSOLUTE gate and is gone -- see forward().
+        # Still accepted (and ignored) so checkpoints saved before the switch
+        # keep loading: core.eval rebuilds the model from the config stored IN
+        # the checkpoint, so removing the argument outright would make every
+        # older run unevaluatable.
+        self.conf_ratio = conf_ratio
         # sees the attractor AND a summary of the masked embedding it produced
         self.conf = nn.Sequential(
             nn.Linear(self.queries.shape[-1] + self.dim, conf_hidden),
@@ -80,7 +92,26 @@ class TDAPruneHead(TDAHead):
 
         act = torch.sigmoid(exist_logits)
         conf = torch.sigmoid(conf_logits)
-        keep = (act > self.stop_threshold) & (conf > self.conf_threshold)
+
+        # RELATIVE pruning, not an absolute threshold.
+        #
+        # An absolute gate is a bootstrap trap: confidence is trained to predict
+        # SI-SNR, so early in training it correctly predicts "low" for every
+        # stream. A fixed threshold of 0.35 then rejects ALL of them and the
+        # count collapses to the clamp floor of 1 -- which is exactly what
+        # happened: the activity gate had correctly found 3 speakers (0.997,
+        # 0.999, 0.998) and the confidence gate threw all three away because its
+        # best output was 0.327.
+        #
+        # So: activity decides who is a speaker. Confidence only removes slots
+        # that are clearly worse than their peers -- judged against the best
+        # slot in THIS mixture, not against a constant. That is scale-free, so
+        # it does the right thing whether the model is bad (all low, nothing
+        # pruned) or good (outliers pruned).
+        keep = act > self.stop_threshold
+        if self.conf_ratio > 0:
+            best = (conf * keep.float()).amax(1, keepdim=True).clamp_min(1e-6)
+            keep = keep & (conf > self.conf_ratio * best)
 
         return masks, {
             "exist_logits": exist_logits,

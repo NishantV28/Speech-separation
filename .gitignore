@@ -17,6 +17,13 @@ manifests/
 manifests_smoke/
 *.jsonl
 
+# ------------------------------------------------------- demo output
+# separate.py writes wavs + a multi-MB spectrogram png. Regenerate it from a
+# checkpoint whenever you need it; it does not belong in git.
+demo/
+demo_out/
+*.png
+
 # ------------------------------------------------------- training output
 # Checkpoints are ~20 MB each and one per run. Logs and results are
 # reproducible from the code + config.
