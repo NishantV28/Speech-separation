@@ -130,35 +130,145 @@ That's the bet. P2 vs P4 tests it on your data.
 
 ---
 
-## P5: the contribution
+## P5: architecture
 
-Three ideas, all attacking **one** problem: two "attractors" grabbing the same
-speaker while a real speaker gets missed.
+Shapes are for one 4-second window at 16 kHz. **5.14M parameters.**
 
-**1. Confidence pruning** — a small head listens to each separated voice and
-predicts how clean it is. Two attractors stuck on one speaker both sound muddy,
-which the existence check can't see (it decides *before* separating).
+```
+                        10 s mixture wav
+                               |
+                    random 4 s window   (a different one every epoch)
+                               |
+                          (B, 64000)
+                               |
+   +---------------------------v---------------------------+
+   | STFT    n_fft=256   hop=128                            |
+   | real+imag stacked as 2 channels                        |
+   +---------------------------+---------------------------+
+                               |
+                      X  (B, 2, 129, 501)
+                          |  |    |    |
+                          |  |    |    +-- 501 time frames
+                          |  |    +------- 129 frequency bins
+                          |  +------------ 2 = real / imaginary
+                               |
+   +---------------------------v---------------------------+
+   | MossFormer2-lite            "the listening"            |
+   |                                                        |
+   |   fold freq into features  ->  (B, 258, 501)           |
+   |   Conv1d                   ->  (B, 192, 501)           |
+   |                                one sequence over time  |
+   |                                                        |
+   |   +-- x7 blocks -------------------------------------+ |
+   |   |   GatedAttention    every frame sees every frame | |
+   |   |         |           (global: who belongs to whom)| |
+   |   |   GatedFSMN         conv over time               | |
+   |   |                     (local, parallel, no RNN)    | |
+   |   +--------------------------------------------------+ |
+   |                                                        |
+   |   Conv1d  ->  unfold back to the freq x time grid      |
+   +---------------------------+---------------------------+
+                               |
+                      H  (B, 48, 129, 501)
+             a 48-dim description of every time-freq point
+                               |
+   +---------------------------v---------------------------+
+   | TDA head          "who is talking, and how many"       |
+   |                                                        |
+   |   H --> summary Conv2d --> mean over frequency         |
+   |              |                                         |
+   |         memory (B, 501, 128)  + positional encoding    |
+   |              |                                         |
+   |              |        4 LEARNED QUERIES  (4, 128)      |
+   |              |        = 4 empty "seats" for speakers   |
+   |              |               |                         |
+   |              +-------+-------+                         |
+   |                      v                                 |
+   |         Transformer decoder   (2 layers, 4 heads)      |
+   |           - queries CROSS-ATTEND to the mixture        |
+   |           - queries SELF-ATTEND to each other          |
+   |             `- they negotiate: "you take that voice,   |
+   |                I take this one". All at once, so no    |
+   |                chain and no compounding errors --      |
+   |                this is the whole difference from EDA.  |
+   |                      |                                 |
+   |              attractors (B, 4, 128)                    |
+   |              one 128-d vector per speaker              |
+   |                      |                                 |
+   |        +-------------+-------------+                   |
+   |        v             v             v                   |
+   |    exists()      to_mask()      conf()        (1)      |
+   |     (B,4)       (B,4,48,2)      (B,4)                  |
+   |  "am I real?"   mask weights   "is my output clean?"   |
+   +--------+-------------+-------------+-------------------+
+            |             |             |
+            |     dot with H at every time-freq point
+            |             v             |
+            |    masks (B, 4, 2, 129, 501)
+            |             |             |
+            |    complex multiply into X, then iSTFT
+            |             v             |
+            |      est (B, 4, 64000)    |
+            |             |             |
+            |    mixture consistency:   |
+            |    est += (mix - sum(est)) / 4
+            |    (outputs must account for the whole input; free)
+            |             |             |
+            v             v             v
+   +--------------------------------------------------------+
+   | LOSS                                                   |
+   |                                                        |
+   |   outputs come out in arbitrary order, refs too        |
+   |     -> HUNGARIAN matching finds the best pairing       |
+   |                                                        |
+   |   thresholded SNR   (NOT SI-SDR: with 4 slots and 2    |
+   |     speakers some refs are SILENCE, and SI-SDR divides |
+   |     by the ref -> undefined, on every single batch)    |
+   |                                                        |
+   |   + exist BCE       (0.1)      was this slot a speaker?|
+   |   + conf  BCE       (0.1) (1)  regress its real SI-SNR |
+   |   + repulsion       (0.1) (2)  attractors must differ  |
+   |   x overlap weight  (1.0) (3)  weight by speaker count |
+   +--------------------------------------------------------+
 
-**2. Attractor repulsion** — if two attractors grabbed the same person, they're
-two *similar vectors*. So penalise them for being similar. EDA and SepTDA both
-just hope attractors spread out; neither adds anything to make them. One matrix
-multiply, no extra libraries.
+                    ---- AT INFERENCE ----
+        activity = sigmoid(exists) > 0.5
+        keep     = activity AND conf > 0.3 x best conf
+        n_est    = keep.sum()          <-- THE ANSWER
+                   nobody ever passed in the count
+```
 
-**3. Overlap-weighted loss** — your mixtures average 0.67 overlap, so about a
-third of every clip has only *one* person talking, which is trivially easy. The
-normal loss spends a third of its effort there. This weights the loss toward the
-moments where people actually talk over each other.
+### The three additions (1)(2)(3)
 
-All three are **off by default everywhere else**, so P4 is a clean comparison
-and P5's improvement is attributable.
+All three attack **one** failure: two attractors grabbing the same speaker while
+a real speaker goes unclaimed.
 
-`configs/ablations/` turns on one idea at a time, if you want to know which one
-did the work. Three more runs; skip if you're short on time.
+**(1) Confidence pruning.** `exists()` judges the *attractor* — before anything is
+separated. `conf()` judges the *output*, after. Two attractors stuck on one
+speaker both produce muddy audio: invisible to `exists`, obvious to `conf`. It is
+trained to regress each stream's real SI-SNR, which we know at training time and
+would otherwise throw away.
 
-**ECAPA is switched off and does nothing** — it needs `speechbrain`, which isn't
-installed, and it fails silently. Repulsion replaces it.
+Pruning is **relative** (`conf > 0.3 x best`), not absolute. An absolute gate is a
+bootstrap trap: confidence predicts SI-SNR, so early in training it correctly says
+"low" for everything, a fixed threshold rejects them all, and the count collapses
+to 1. That is not hypothetical — it happened. The activity gate had correctly
+found 3 speakers (0.997 / 0.999 / 0.998) and a 0.35 threshold threw all three
+away, because the best confidence the model could produce was 0.327.
 
----
+**(2) Attractor repulsion.** Collapse *is* two similar vectors. So penalise cosine
+similarity between active attractors — one matmul, no dependency. EDA and SepTDA
+both generate attractors and *hope* they diversify; neither adds a term that makes
+them. This replaces the ECAPA push-loss, which needs speechbrain and silently does
+nothing when it is absent.
+
+**(3) Overlap-weighted loss.** Mixtures average 0.67 overlap, so ~a third of every
+clip has ONE person talking and is trivially separable. Uniform SI-SNR spends a
+third of the gradient there. Weight the error by local speaker count so capacity
+goes where voices actually collide. `alpha=0` recovers uniform SI-SNR *exactly* —
+there is a test asserting it, and that is what keeps P4 a clean control.
+
+`configs/ablations/` turns on one at a time, so a P5 win can be attributed.
 
 ## Batch size: don't go above 16
 
