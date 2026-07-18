@@ -376,9 +376,4 @@ This project builds upon ideas from:
 
 ---
 
-# License
 
-This repository is intended for research and educational purposes.
-  chunked training loop that doesn't exist.
-- **MixIT / difficulty scheduler** — were referenced by P8's config but never
-  implemented, so they silently did nothing. Better gone than pretending.
